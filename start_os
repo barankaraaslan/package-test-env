@@ -1,1 +1,1 @@
-qemu-system-x86_64 -m 2G --enable-kvm -device e1000,netdev=net0 -netdev user,id=net0,hostfwd=tcp::5555-:22 vm_disk 
+qemu-system-x86_64 -m 2G --enable-kvm -device e1000,netdev=net0 -netdev user,id=net0,hostfwd=tcp::5555-:22 archlinux.iso 

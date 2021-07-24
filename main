@@ -1,23 +1,47 @@
-# setup target partition
-parted /dev/sda mklabel msdos -s
-parted /dev/sda mkpart primary ext4 0% 100%
-mkfs.ext4 /dev/sda1
-mount /dev/sda1 /mnt
+#!/bin/bash
+
+rm archlinux.iso
+
+fallocate -l 5120000000 archlinux.iso
+chown baran:baran archlinux.iso
+
+sgdisk -Z archlinux.iso
+sgdisk -n=1:0:+5M archlinux.iso
+sgdisk -n=2:0:0 archlinux.iso
+sgdisk -c=1:BIOSBoot archlinux.iso
+sgdisk -c=2:ArchRoot archlinux.iso
+sgdisk -t=1:EF02 archlinux.iso
+sgdisk -t=2:8300 archlinux.iso
+
+
+LoopDev=`losetup -f --show -P archlinux.iso`    
+mkfs.ext4 ${LoopDev}p2
+
+mkdir -p mnt
+mount ${LoopDev}p2 mnt
 
 # setup base system
-pacstrap /mnt base linux linux-firmware
-genfstab -U /mnt >> /mnt/etc/fstab
-echo vm_1 >> /mnt/etc/hostname
-ln -sf /mnt/usr/share/zoneinfo/Turkey /mnt/etc/localtime
-sed -i 's/#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /mnt/etc/locale.gen
-echo 'LANG=en_US.UTF-8' > /mnt/etc/locale.conf
-chpasswd --root /mnt <<< "root:1234" 
-arch-chroot /mnt /bin/bash -c 'locale-gen; hwclock --systohc'
+pacstrap mnt base linux linux-firmware
+# genfstab -L mnt >> mnt/etc/fstab
+UUID=`blkid -s UUID -o value "${LoopDev}p2"`
+echo "# RootFileSystem" >> mnt/etc/fstab
+echo "UUID=${UUID}	/	ext4	rw,relatime	0 1" >> mnt/etc/fstab
+
+echo vm_1 >> mnt/etc/hostname
+ln -sf mnt/usr/share/zoneinfo/Turkey mnt/etc/localtime
+sed -i 's/#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' mnt/etc/locale.gen
+echo 'LANG=en_US.UTF-8' > mnt/etc/locale.conf
+chpasswd --root mnt <<< "root:1234" 
+arch-chroot mnt /bin/bash -c 'locale-gen; hwclock --systohc'
 
 # setup bootloader
-pacstrap /mnt grub
-arch-chroot /mnt /bin/bash -c 'grub-install --target=i386-pc /dev/sda'
-arch-chroot /mnt /bin/bash -c 'grub-mkconfig -o /boot/grub/grub.cfg'
+pacstrap mnt grub
+arch-chroot mnt /bin/bash -c "grub-install --target=i386-pc $LoopDev"
+arch-chroot mnt /bin/bash -c 'grub-mkconfig -o /boot/grub/grub.cfg'
+arch-chroot mnt /bin/bash -c 'mkinitcpio -p linux'
 
 # network
-pacstrap /mnt networkmanager
+pacstrap mnt networkmanager
+
+umount mnt
+losetup -d ${LoopDev}

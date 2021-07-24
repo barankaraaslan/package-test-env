@@ -1,8 +1,0 @@
-if [ ! -f vm_disk ]; then
-	qemu-img create -f raw vm_disk 4G
-fi
-if [ ! -f archlinux_live.iso ]; then
-	curl https://ftp.agdsn.de/pub/mirrors/archlinux/iso/2021.07.01/archlinux-2021.07.01-x86_64.iso -o archlinux_live.iso
-fi
-
-qemu-system-x86_64 -cdrom archlinux_live.iso -boot order=d -drive file=vm_disk,format=raw -m 2G --enable-kvm -device e1000,netdev=net0 -netdev user,id=net0,hostfwd=tcp::5555-:22
