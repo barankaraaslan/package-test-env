@@ -1,49 +1,187 @@
-#!/bin/bash
+#!/bin/sh
+#
+# DigitalOcean Archlinux custom image script.
+# Might be of use for other virtual enviroments that can use a raw disk
+#
+# Written by: Derek Robson <robsonde at gmail>
+# 
 
-rm archlinux.iso
+# Add any extra packages here as a space separated list
+Core_Packages="base linux linux-firmware gettext inetutils jfsutils logrotate netctl s-nail sysfsutils "
+Required_Packages="texinfo usbutils util-linux xfsprogs openssh grub wget gptfdisk git parted "
+Optional_Packages="base-devel haveged nano vi python "
 
-fallocate -l 5120000000 archlinux.iso
-chown baran:baran archlinux.iso
+# Check we have the right tools installed.
 
-sgdisk -Z archlinux.iso
-sgdisk -n=1:0:+5M archlinux.iso
-sgdisk -n=2:0:0 archlinux.iso
-sgdisk -c=1:BIOSBoot archlinux.iso
-sgdisk -c=2:ArchRoot archlinux.iso
-sgdisk -t=1:EF02 archlinux.iso
-sgdisk -t=2:8300 archlinux.iso
+which which > /dev/null 2>&1 
+if [ $? -ne 0 ]; then
+	echo "Can't find witch command"
+	echo "Try adding package base-devel"
+	exit 1
+fi
+
+which sgdisk > /dev/null 2>&1 
+if [ $? -ne 0 ]; then
+	echo "Can't find sgdisk"
+	echo "Try adding package gptfdisk"
+	exit 1
+fi
+
+which pacstrap > /dev/null 2>&1 
+if [ $? -ne 0 ]; then
+	echo "Can't find pacstrap"
+	echo "Try adding package arch-install-scripts"
+	exit 1
+fi
 
 
-LoopDev=`losetup -f --show -P archlinux.iso`    
-mkfs.ext4 ${LoopDev}p2
+# What is the name of image file?
+ImageFile=archlinux.iso
 
-mkdir -p mnt
-mount ${LoopDev}p2 mnt
 
-# setup base system
-pacstrap mnt base linux linux-firmware
-# genfstab -L mnt >> mnt/etc/fstab
+# Remove any old version of image file.
+[ -e "${ImageFile}" ] && rm "${ImageFile}"
+[ -e "${ImageFile}.gz" ] && rm "${ImageFile}.gz"
+
+
+# Start by making a 5GB disk, this could be smaller.
+fallocate -l 5120000000 $ImageFile
+if [ $? -ne 0 ]; then
+	echo "Can't allocate disk space!"
+	exit 1
+fi
+
+
+# Use sgdisk to do disk layout
+# GPT, with BIOS boot and GRUB
+sgdisk -Z $ImageFile
+sgdisk -n=1:0:+5M $ImageFile
+sgdisk -n=2:0:0 $ImageFile
+sgdisk -c=1:BIOSBoot $ImageFile
+sgdisk -c=2:ArchRoot $ImageFile
+sgdisk -t=1:EF02 $ImageFile
+sgdisk -t=2:8300 $ImageFile
+
+
+# Find and setup loop back mount points
+LoopDev=`losetup -f --show -P $ImageFile`
+if [ $? -ne 0 ]; then
+	echo "Can't setup loopback devices!"
+	exit 1
+fi
+
+
+# Create file systems
+# NOTE: P1 is the magic DigitalOcean slice.
+# NOTE: P2 is the GRUB BIOS slice.
+# NOTE: P2 is the root file system.
+mkfs.ext4 "${LoopDev}p2"
+
+
+# Mount the new root file system to mnt
+mount "${LoopDev}p2" mnt
+if [ $? -ne 0 ]; then
+	echo "Can't mount the new root file system!"
+	exit 1
+fi
+
+
+# pacstrap install things, this is the place to add packages
+pacstrap -c -M mnt $Core_Packages $Required_Packages $Optional_Packages
+if [ $? -ne 0 ]; then
+	echo "Something went wrong during install of image!"
+	exit 1
+fi
+
+
+# We need an fstab
 UUID=`blkid -s UUID -o value "${LoopDev}p2"`
 echo "# RootFileSystem" >> mnt/etc/fstab
 echo "UUID=${UUID}	/	ext4	rw,relatime	0 1" >> mnt/etc/fstab
 
-echo vm_1 >> mnt/etc/hostname
-ln -sf mnt/usr/share/zoneinfo/Turkey mnt/etc/localtime
-sed -i 's/#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' mnt/etc/locale.gen
-echo 'LANG=en_US.UTF-8' > mnt/etc/locale.conf
-chpasswd --root mnt <<< "root:1234" 
-arch-chroot mnt /bin/bash -c 'locale-gen; hwclock --systohc'
 
+# We need a name servers, if you want different DNS, this is the place to change it.
+echo 'nameserver 8.8.8.8' > mnt/etc/resolv.conf
+
+
+# Enable all the kernel mirrors.
+sed -i '/^#.*kernel/s/^#//' mnt/etc/pacman.d/mirrorlist
+
+
+# Set blank machine-id so that a new machine-id is created on first boot.
+echo "" > mnt/etc/machine-id
+
+
+# Add kernel modules we need for DigitalOcean support.
 sed -i 's/MODULES=()/MODULES=(serio_raw floppy ata_piix virtio_scsi virtio_balloon uhci-hcd i8042 libps2 ehci-hcd virtio_net serio atkbd ata_generic failover virtio_pci ehci-pci net_failover pata_acpi)/' mnt/etc/mkinitcpio.conf
 
-# setup bootloader
-pacstrap mnt grub
-arch-chroot mnt /bin/bash -c "grub-install --target=i386-pc $LoopDev"
-arch-chroot mnt /bin/bash -c 'grub-mkconfig -o /boot/grub/grub.cfg'
-arch-chroot mnt /bin/bash -c 'mkinitcpio -p linux'
 
-# network
-pacstrap mnt networkmanager
+# # Write the disk resize script. 
+# cat << EOF > mnt/usr/bin/disk_resize.sh
+# #!/bin/sh
+# sgdisk -d=3 /dev/vda
+# sgdisk -n=3:0:0 /dev/vda
+# sgdisk -c=3:ArchRoot /dev/vda
+# partprobe /dev/vda
+# resize2fs /dev/vda3
+# systemctl disable disk_resize
+# rm /etc/systemd/system/disk_resize.service
+# exit 0
+# EOF
 
+# chmod 755 mnt/usr/bin/disk_resize.sh
+
+
+# # Write the disk resize service file 
+# cat << EOF > mnt/etc/systemd/system/disk_resize.service
+# [Unit]
+# Description=Disk resize magic
+
+# [Service]
+# ExecStart=/bin/bash -c /usr/bin/disk_resize.sh
+
+# [Install]
+# WantedBy=multi-user.target
+# EOF
+
+
+# Write the post install script. 
+cat << EOF > mnt/post_install.sh
+#!/bin/sh
+mkinitcpio -p linux
+chpasswd <<< "root:1234"
+/usr/bin/grub-install --target=i386-pc ${LoopDev}
+/usr/bin/grub-mkconfig -o /boot/grub/grub.cfg
+# cd /tmp
+# sudo -u nobody git clone https://github.com/robsonde/digital-ocean-synchronize-AUR
+# cd digital-ocean-synchronize-AUR
+# sudo -u nobody makepkg
+# pacman --noconfirm -U *.pkg.tar.zst
+systemctl enable systemd-timesyncd.service
+systemctl enable sshd.service
+systemctl enable haveged.service
+systemctl enable systemd-networkd.service
+# systemctl enable disk_resize.service
+EOF
+
+
+chmod 755 mnt/post_install.sh
+
+# Run the post install inside he new image.
+arch-chroot mnt /post_install.sh
+rm mnt/post_install.sh
+
+
+chown baran:baran archlinux.iso
+# Clean up
 umount mnt
-losetup -d ${LoopDev}
+losetup -D
+
+# echo "Compressing image"
+# gzip -k $ImageFile
+# if [ $? -ne 0 ]; then
+# 	echo "Something went wrong during compress of image!"
+# 	exit 1
+# fi
+
+exit 0
