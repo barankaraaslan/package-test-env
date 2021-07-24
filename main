@@ -34,6 +34,8 @@ echo 'LANG=en_US.UTF-8' > mnt/etc/locale.conf
 chpasswd --root mnt <<< "root:1234" 
 arch-chroot mnt /bin/bash -c 'locale-gen; hwclock --systohc'
 
+sed -i 's/MODULES=()/MODULES=(serio_raw floppy ata_piix virtio_scsi virtio_balloon uhci-hcd i8042 libps2 ehci-hcd virtio_net serio atkbd ata_generic failover virtio_pci ehci-pci net_failover pata_acpi)/' mnt/etc/mkinitcpio.conf
+
 # setup bootloader
 pacstrap mnt grub
 arch-chroot mnt /bin/bash -c "grub-install --target=i386-pc $LoopDev"
